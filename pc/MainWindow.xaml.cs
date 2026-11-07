@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -29,18 +30,32 @@ public partial class MainWindow : Window
     private readonly double[] _barLevels = new double[BarCount];
     private readonly Random _random = new();
 
+    private readonly Settings _settings = Settings.Load();
+    private readonly DispatcherTimer _saveDelay = new() { Interval = TimeSpan.FromMilliseconds(600) };
+
     private NetworkCandidate? _selected;
     private bool _qrWhilePlaying;
     private bool _wasPlaying;
     private double _level;
+    private bool _exiting;
+    private bool _ready;
 
-    public MainWindow()
+    public MainWindow(EventWaitHandle showSignal)
     {
         InitializeComponent();
 
-        _selected = _candidates.FirstOrDefault();
+        _selected = _candidates.FirstOrDefault(c => c.Address == _settings.Network) ?? _candidates.FirstOrDefault();
         BuildMeter();
         UpdateNetwork();
+
+        VolumeSlider.Value = Math.Clamp(_settings.Volume, 0, 100);
+        _receiver.Volume = (float)(VolumeSlider.Value / 100);
+        AutostartToggle.IsChecked = Autostart.IsEnabled;
+        _saveDelay.Tick += (_, _) =>
+        {
+            _saveDelay.Stop();
+            _settings.Save();
+        };
 
         _web.FallbackHosts = () => _candidates.Where(c => c.Score > 0).Select(c => c.Address);
         _receiver.Status += text => Dispatcher.BeginInvoke(() => StatusText.Text = text);
@@ -48,12 +63,6 @@ public partial class MainWindow : Window
 
         SetupTray();
         SourceInitialized += (_, _) => DarkTitleBar();
-        Loaded += (_, _) =>
-        {
-            _receiver.Start();
-            _web.Start();
-            _timer.Start();
-        };
         StateChanged += (_, _) =>
         {
             if (WindowState == WindowState.Minimized) Hide();
@@ -61,11 +70,60 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _timer.Stop();
+            _settings.Save();
             _tray.Visible = false;
             _tray.Dispose();
             _receiver.Dispose();
             _web.Dispose();
         };
+
+        // Another launch of the exe asks us to come to the front.
+        ThreadPool.RegisterWaitForSingleObject(showSignal,
+            (_, _) => Dispatcher.BeginInvoke(ShowFromTray), null, Timeout.Infinite, false);
+
+        // Start right away: with autostart the window may stay hidden in the tray.
+        _receiver.Start();
+        _web.Start();
+        _timer.Start();
+        _ready = true;
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (_exiting) return;
+
+        // The close button keeps MirrorSound running in the tray, so the phone can still connect.
+        e.Cancel = true;
+        Hide();
+        if (!_settings.TrayHintShown)
+        {
+            _settings.TrayHintShown = true;
+            _settings.Save();
+            _tray.ShowBalloonTip(4000, "MirrorSound работает в трее",
+                "Телефон может подключиться в любой момент. Выйти можно через значок в трее.",
+                Forms.ToolTipIcon.None);
+        }
+    }
+
+    private void ExitApp()
+    {
+        _exiting = true;
+        Close();
+        Application.Current.Shutdown();
+    }
+
+    private void AutostartChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_ready) return;
+        try
+        {
+            Autostart.Set(AutostartToggle.IsChecked == true);
+        }
+        catch
+        {
+            AutostartToggle.IsChecked = Autostart.IsEnabled;
+        }
     }
 
     private void Tick()
@@ -81,6 +139,8 @@ public partial class MainWindow : Window
             DeviceText.Text = playing ? $"Телефон {device}" : "Телефон ещё не подключён";
             _tray.Text = playing ? "MirrorSound: играет звук" : "MirrorSound: ожидание телефона";
         }
+
+        if (!IsVisible) return; // nothing to animate while hidden in the tray
 
         bool showQr = !playing || _qrWhilePlaying;
         QrPanel.Visibility = showQr ? Visibility.Visible : Visibility.Collapsed;
@@ -164,6 +224,8 @@ public partial class MainWindow : Window
             item.Click += (_, _) =>
             {
                 _selected = candidate;
+                _settings.Network = candidate.Address;
+                _settings.Save();
                 UpdateNetwork();
             };
             menu.Items.Add(item);
@@ -178,6 +240,9 @@ public partial class MainWindow : Window
         if (VolumeText == null) return; // fires once during InitializeComponent
         _receiver.Volume = (float)(e.NewValue / 100);
         VolumeText.Text = $"{e.NewValue:0}%";
+        _settings.Volume = Math.Round(e.NewValue);
+        _saveDelay.Stop();
+        _saveDelay.Start();
     }
 
     private void SetupTray()
@@ -189,7 +254,7 @@ public partial class MainWindow : Window
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => ShowFromTray());
-        menu.Items.Add("Выход", null, (_, _) => Close());
+        menu.Items.Add("Выход", null, (_, _) => ExitApp());
         _tray.ContextMenuStrip = menu;
     }
 
