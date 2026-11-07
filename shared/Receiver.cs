@@ -1,10 +1,19 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using NAudio.CoreAudioApi;
-using NAudio.Wave;
 
 namespace MirrorSound;
+
+/// <summary>Platform audio output fed by <see cref="Receiver"/>: a FIFO of 16-bit PCM that plays once started.</summary>
+public interface IPlayback : IDisposable
+{
+    int BufferedBytes { get; }
+    float Volume { set; }
+    void Add(byte[] data, int count);
+    /// <summary>Drops the oldest <paramref name="bytes"/> of buffered audio.</summary>
+    void Skip(int bytes);
+    void Play();
+}
 
 /// <summary>
 /// Answers discovery broadcasts from the phone and plays the PCM stream it sends.
@@ -17,6 +26,11 @@ public sealed class Receiver : IDisposable
     public const int DiscoveryPort = 47801;
 
     public event Action<string>? Status;
+
+    /// <summary>Opens the platform audio output for (sampleRate, channels).</summary>
+    private readonly Func<int, int, IPlayback> _createPlayback;
+
+    public Receiver(Func<int, int, IPlayback> createPlayback) => _createPlayback = createPlayback;
     public float Volume { get; set; } = 1f;
 
     /// <summary>Address of the phone currently streaming, or null.</summary>
@@ -95,15 +109,23 @@ public sealed class Receiver : IDisposable
                 _ = Task.Run(async () =>
                 {
                     var who = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
+                    bool audioFailed = false;
                     using (client)
                     {
                         try
                         {
                             await Play(client.GetStream(), who, connection.Token);
                         }
+                        catch (AudioException e)
+                        {
+                            audioFailed = true;
+                            Status?.Invoke("Не удалось открыть звук: " + e.Message);
+                        }
                         catch (Exception) { }
                     }
                     if (_current == connection && !ct.IsCancellationRequested)
+                        _device = null;
+                    if (_current == connection && !ct.IsCancellationRequested && !audioFailed)
                     {
                         _device = null;
                         Status?.Invoke("Ожидание телефона…");
@@ -129,26 +151,28 @@ public sealed class Receiver : IDisposable
 
         int rate = BitConverter.ToInt32(header, 4);
         int channels = BitConverter.ToInt16(header, 8);
-        var format = new WaveFormat(rate, 16, channels);
-        int block = format.BlockAlign;
-        int bytesPerSecond = format.AverageBytesPerSecond;
+        if (rate is < 8000 or > 192000 || channels is < 1 or > 8) return;
+        int block = channels * 2;
+        int bytesPerSecond = rate * block;
         int Align(int bytes) => bytes - bytes % block;
 
-        var buffer = new BufferedWaveProvider(format)
+        IPlayback output;
+        try
         {
-            BufferDuration = TimeSpan.FromSeconds(2),
-            DiscardOnBufferOverflow = true,
-        };
-        var volume = new VolumeWaveProvider16(buffer) { Volume = Volume };
-        using var output = new WasapiOut(AudioClientShareMode.Shared, true, 40);
-        output.Init(volume);
+            output = _createPlayback(rate, channels);
+        }
+        catch (Exception e)
+        {
+            throw new AudioException(e.Message);
+        }
+        using var _ = output;
+        output.Volume = Volume;
 
         // Start once ~60 ms is buffered; if the backlog grows past 150 ms, skip back to 60 ms
         // so latency stays low even when Wi-Fi delivers audio in bursts.
         int target = Align(bytesPerSecond * 60 / 1000);
         int maxLag = Align(bytesPerSecond * 150 / 1000);
         var data = new byte[Align(bytesPerSecond / 25)];
-        var trash = new byte[bytesPerSecond];
         int fill = 0;
         bool playing = false;
 
@@ -174,20 +198,20 @@ public sealed class Receiver : IDisposable
                 float level = peak / 32768f;
                 if (level > _peak) _peak = level;
 
-                buffer.AddSamples(data, 0, usable);
+                output.Add(data, usable);
                 Buffer.BlockCopy(data, usable, data, 0, fill - usable);
                 fill -= usable;
             }
 
-            volume.Volume = Volume;
+            output.Volume = Volume;
 
-            if (!playing && buffer.BufferedBytes >= target)
+            if (!playing && output.BufferedBytes >= target)
             {
                 output.Play();
                 playing = true;
             }
-            if (buffer.BufferedBytes > maxLag)
-                buffer.Read(trash, 0, Align(buffer.BufferedBytes - target));
+            if (output.BufferedBytes > maxLag)
+                output.Skip(Align(output.BufferedBytes - target));
         }
     }
 
@@ -196,4 +220,6 @@ public sealed class Receiver : IDisposable
         _cts.Cancel();
         _current?.Cancel();
     }
+
+    private sealed class AudioException(string message) : Exception(message);
 }

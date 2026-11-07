@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MirrorSound</AssemblyName>
+    <RootNamespace>MirrorSound</RootNamespace>
+    <Version>1.2.0</Version>
+    <Product>MirrorSound</Product>
+    <Company>Uto4ka</Company>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <!-- No culture-specific formatting is needed, and this drops the libicu dependency. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Protocol, QR web page, networks and settings are shared with the Windows app. -->
+    <Compile Include="..\shared\*.cs" Link="shared\%(Filename)%(Extension)" />
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.22" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+
+  <!-- The phone app is embedded so the PC can serve it to the phone (build the Android app first). -->
+  <ItemGroup Condition="Exists('..\android\app\build\outputs\apk\debug\app-debug.apk')">
+    <EmbeddedResource Include="..\android\app\build\outputs\apk\debug\app-debug.apk" LogicalName="MirrorSound.apk" />
+  </ItemGroup>
+
+</Project>

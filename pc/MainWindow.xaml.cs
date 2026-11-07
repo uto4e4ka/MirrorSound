@@ -21,7 +21,7 @@ public partial class MainWindow : Window
     private static readonly Brush Green = Frozen(Color.FromRgb(0x22, 0xC5, 0x5E));
     private static readonly Brush Amber = Frozen(Color.FromRgb(0xF5, 0x9E, 0x0B));
 
-    private readonly Receiver _receiver = new();
+    private readonly Receiver _receiver = new((rate, channels) => new WasapiPlayback(rate, channels));
     private readonly WebServer _web = new();
     private readonly List<NetworkCandidate> _candidates = NetworkInfo.Candidates();
     private readonly Forms.NotifyIcon _tray = new();

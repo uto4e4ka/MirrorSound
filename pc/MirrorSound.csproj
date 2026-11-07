@@ -10,7 +10,7 @@
     <AssemblyName>MirrorSound</AssemblyName>
     <RootNamespace>MirrorSound</RootNamespace>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Product>MirrorSound</Product>
     <Company>Uto4ka</Company>
   </PropertyGroup>
@@ -22,6 +22,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Protocol, QR web page, networks and settings are shared with the Linux app. -->
+    <Compile Include="..\shared\*.cs" Link="shared\%(Filename)%(Extension)" />
     <Resource Include="Assets\app.ico" />
   </ItemGroup>
 
