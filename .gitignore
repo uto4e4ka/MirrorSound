@@ -1,0 +1,18 @@
+# Build output
+bin/
+pc/bin/
+pc/obj/
+android/.gradle/
+android/build/
+android/app/build/
+
+# Local machine settings
+android/local.properties
+.idea/
+*.iml
+.vs/
+*.user
+
+# Personal scrcpy launcher (paths are specific to one PC)
+*.bat
+!android/gradlew.bat
