@@ -10,7 +10,7 @@
     <AssemblyName>MirrorSound</AssemblyName>
     <RootNamespace>MirrorSound</RootNamespace>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <Product>MirrorSound</Product>
     <Company>Uto4ka</Company>
   </PropertyGroup>

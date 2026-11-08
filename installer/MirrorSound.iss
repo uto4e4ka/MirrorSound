@@ -2,7 +2,7 @@
 ; Build: publish pc/ self-contained into bin\pc-release first (see build-installer.ps1), then compile this file.
 
 #define AppName "MirrorSound"
-#define AppVersion "1.1.0"
+#define AppVersion "1.3.0"
 #define AppExe "MirrorSound.exe"
 
 [Setup]
