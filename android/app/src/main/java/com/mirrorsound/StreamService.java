@@ -7,6 +7,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
@@ -46,6 +47,8 @@ public class StreamService extends Service {
     static final String EXTRA_DATA = "data";
     static final String EXTRA_HOST = "host";
     static final String ACTION_STOP = "com.mirrorsound.STOP";
+    static final String ACTION_QUIETER = "com.mirrorsound.QUIETER";
+    static final String ACTION_LOUDER = "com.mirrorsound.LOUDER";
     static final int TCP_PORT = 47800;
     static final int DISCOVERY_PORT = 47801;
 
@@ -59,6 +62,9 @@ public class StreamService extends Service {
     /** Address of the web player while streaming, e.g. http://192.168.0.149:47803 */
     static volatile String webUrl;
     static volatile WebPlayer web;
+    /** Volume of the stream in percent, applied on the phone, so it works for the PC and browsers alike. */
+    private static volatile int volume = -1;
+    private static volatile StreamService instance;
 
     private MediaProjection projection;
     private WifiManager.WifiLock wifiLock;
@@ -67,14 +73,35 @@ public class StreamService extends Service {
     private volatile Socket socket;
     private volatile boolean pcConnected;
     private final ArrayBlockingQueue<byte[]> pcQueue = new ArrayBlockingQueue<>(50);
+    private boolean toPc;
+
+    static int volume(Context context) {
+        if (volume < 0) volume = context.getSharedPreferences("mirrorsound", MODE_PRIVATE).getInt("volume", 100);
+        return volume;
+    }
+
+    static void setVolume(Context context, int percent) {
+        volume = Math.max(0, Math.min(100, percent));
+        context.getSharedPreferences("mirrorsound", MODE_PRIVATE).edit().putInt("volume", volume).apply();
+    }
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override
     @SuppressWarnings("deprecation")
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+        String action = intent == null ? null : intent.getAction();
+        if (ACTION_STOP.equals(action)) {
             stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (ACTION_QUIETER.equals(action) || ACTION_LOUDER.equals(action)) {
+            if (running) {
+                setVolume(this, volume(this) + (ACTION_LOUDER.equals(action) ? 10 : -10));
+                refreshNotification();
+            } else {
+                stopSelf();
+            }
             return START_NOT_STICKY;
         }
         if (intent == null || running) {
@@ -83,8 +110,9 @@ public class StreamService extends Service {
         }
 
         String host = intent.getStringExtra(EXTRA_HOST);
-        boolean toPc = host != null && !host.trim().isEmpty();
-        startForeground(1, buildNotification(toPc), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        toPc = host != null && !host.trim().isEmpty();
+        volume(this);
+        startForeground(1, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
 
         int code = intent.getIntExtra(EXTRA_CODE, 0);
         Intent data = intent.getParcelableExtra(EXTRA_DATA);
@@ -104,6 +132,7 @@ public class StreamService extends Service {
         wifiLock.acquire();
 
         running = true;
+        instance = this;
         stopping = false;
         status = toPc ? "Подключение…" : "Звук доступен в браузере";
         startWebPlayer();
@@ -198,6 +227,8 @@ public class StreamService extends Service {
             int n = recorder.read(chunk, 0, chunk.length);
             if (n <= 0) continue;
             byte[] piece = Arrays.copyOf(chunk, n);
+            int percent = volume;
+            if (percent < 100) scale(piece, percent);
             if (pcConnected && !pcQueue.offer(piece)) {
                 pcQueue.clear(); // PC fell half a second behind: drop the backlog
                 pcQueue.offer(piece);
@@ -208,6 +239,24 @@ public class StreamService extends Service {
 
         recorder.stop();
         recorder.release();
+    }
+
+    private static void scale(byte[] pcm, int percent) {
+        for (int i = 0; i + 1 < pcm.length; i += 2) {
+            int sample = (short) ((pcm[i] & 0xFF) | (pcm[i + 1] << 8)) * percent / 100;
+            pcm[i] = (byte) sample;
+            pcm[i + 1] = (byte) (sample >> 8);
+        }
+    }
+
+    /** Shows the current volume in the notification of the running stream, if any. */
+    static void showVolume() {
+        StreamService service = instance;
+        if (service != null) service.refreshNotification();
+    }
+
+    private void refreshNotification() {
+        getSystemService(NotificationManager.class).notify(1, buildNotification());
     }
 
     private void sendToPc(String hostList) {
@@ -244,23 +293,33 @@ public class StreamService extends Service {
         pcConnected = false;
     }
 
-    private Notification buildNotification(boolean toPc) {
+    private Notification buildNotification() {
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel(CHANNEL_ID, "Трансляция звука",
                 NotificationManager.IMPORTANCE_LOW));
         PendingIntent open = PendingIntent.getActivity(this, 0,
                 new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
-        PendingIntent stop = PendingIntent.getService(this, 1,
-                new Intent(this, StreamService.class).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent stop = serviceIntent(1, ACTION_STOP);
+        PendingIntent quieter = serviceIntent(2, ACTION_QUIETER);
+        PendingIntent louder = serviceIntent(3, ACTION_LOUDER);
         return new Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle("MirrorSound")
-                .setContentText(toPc ? "Звук передаётся на компьютер" : "Звук можно слушать в браузере")
+                .setContentText((toPc ? "Звук идёт на компьютер" : "Звук можно слушать в браузере") +
+                        " · громкость " + volume(this) + "%")
                 .setSmallIcon(R.drawable.ic_waves)
                 .setColor(0xFF8B5CF6)
                 .setContentIntent(open)
-                .addAction(new Notification.Action.Builder(null, "Остановить", stop).build())
+                .addAction(new Notification.Action.Builder(null, "Тише", quieter).build())
+                .addAction(new Notification.Action.Builder(null, "Громче", louder).build())
+                .addAction(new Notification.Action.Builder(null, "Стоп", stop).build())
+                .setOnlyAlertOnce(true)
                 .setOngoing(true)
                 .build();
+    }
+
+    private PendingIntent serviceIntent(int code, String action) {
+        return PendingIntent.getService(this, code,
+                new Intent(this, StreamService.class).setAction(action), PendingIntent.FLAG_IMMUTABLE);
     }
 
     private void updateTile() {
@@ -270,6 +329,7 @@ public class StreamService extends Service {
     @Override
     public void onDestroy() {
         stopping = true;
+        instance = null;
         Socket s = socket;
         if (s != null) {
             try { s.close(); } catch (IOException ignored) { }

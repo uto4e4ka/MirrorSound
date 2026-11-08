@@ -25,11 +25,13 @@ import android.os.Looper;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import com.google.mlkit.vision.barcode.common.Barcode;
@@ -78,6 +80,9 @@ public class MainActivity extends Activity {
     private TextView pcTitle;
     private TextView pcAddress;
     private TextView infoView;
+    private SeekBar volumeBar;
+    private TextView volumeText;
+    private boolean draggingVolume;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -153,6 +158,37 @@ public class MainActivity extends Activity {
 
         root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1f));
 
+        // Stream volume: applied on the phone, so it controls the PC and browsers
+        LinearLayout volumeCard = new LinearLayout(this);
+        volumeCard.setGravity(Gravity.CENTER_VERTICAL);
+        volumeCard.setPadding(dp(16), dp(10), dp(14), dp(10));
+        volumeCard.setBackground(rounded(CARD, CARD_BORDER, dp(20)));
+        ImageView speaker = new ImageView(this);
+        speaker.setImageResource(R.drawable.ic_volume);
+        volumeCard.addView(speaker, new LinearLayout.LayoutParams(dp(22), dp(22)));
+        volumeBar = new SeekBar(this);
+        volumeBar.setMax(100);
+        volumeBar.setProgress(StreamService.volume(this));
+        volumeBar.setProgressTintList(ColorStateList.valueOf(VIOLET));
+        volumeBar.setProgressBackgroundTintList(ColorStateList.valueOf(0xFF3A3D48));
+        volumeBar.setThumbTintList(ColorStateList.valueOf(0xFFFFFFFF));
+        volumeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                if (fromUser) StreamService.setVolume(MainActivity.this, value);
+                volumeText.setText(value + "%");
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) { draggingVolume = true; }
+            @Override public void onStopTrackingTouch(SeekBar bar) {
+                draggingVolume = false;
+                StreamService.showVolume();
+            }
+        });
+        volumeCard.addView(volumeBar, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        volumeText = text(StreamService.volume(this) + "%", 14, MUTED, false);
+        volumeText.setGravity(Gravity.END);
+        volumeCard.addView(volumeText, new LinearLayout.LayoutParams(dp(44), -2));
+        root.addView(volumeCard);
+
         // Computer card
         LinearLayout card = new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
@@ -176,7 +212,8 @@ public class MainActivity extends Activity {
         change.setBackground(ripple(null, dp(10)));
         change.setOnClickListener(v -> editHost());
         card.addView(change);
-        root.addView(card);
+        LinearLayout.LayoutParams cardLp = marginTop(dp(10));
+        root.addView(card, cardLp);
 
         // Actions
         LinearLayout actions = new LinearLayout(this);
@@ -217,6 +254,9 @@ public class MainActivity extends Activity {
         power.setActive(running);
         statusView.setText(StreamService.status);
         hintView.setText(running ? "Нажмите, чтобы остановить" : "Нажмите, чтобы начать");
+        if (!draggingVolume && volumeBar.getProgress() != StreamService.volume(this)) {
+            volumeBar.setProgress(StreamService.volume(this)); // changed from the notification
+        }
         String url = StreamService.webUrl;
         WebPlayer web = StreamService.web;
         if (running && url != null) {
@@ -227,6 +267,20 @@ public class MainActivity extends Activity {
         } else {
             webView.setVisibility(View.GONE);
         }
+    }
+
+    /** While streaming, the phone's volume keys in this app change the stream volume instead. */
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (StreamService.running
+                && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            int step = keyCode == KeyEvent.KEYCODE_VOLUME_UP ? 5 : -5;
+            StreamService.setVolume(this, StreamService.volume(this) + step);
+            volumeBar.setProgress(StreamService.volume(this));
+            StreamService.showVolume();
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
     }
 
     private void copyWebUrl() {
