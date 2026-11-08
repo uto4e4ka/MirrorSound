@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#15131F">
+<title>MirrorSound</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #ECEEF2; min-height: 100vh;
+         padding: 36px 20px 28px; display: flex; justify-content: center;
+         background: radial-gradient(120% 60% at 50% 0%, #2A1F55 0%, #15131F 45%, #0B0C10 100%) fixed; }
+  .wrap { width: 100%; max-width: 400px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+  header { display: flex; align-items: center; gap: 12px; align-self: stretch; text-align: left; }
+  .logo { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none;
+          background: linear-gradient(135deg, #8B5CF6, #3B82F6); }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .sub { color: #8A909C; font-size: 13px; margin: 2px 0 0; }
+  button.play { margin: 56px 0 0; width: 180px; height: 180px; border-radius: 50%; border: 0; cursor: pointer;
+                display: grid; place-items: center; color: #fff; position: relative;
+                background: linear-gradient(135deg, #8B5CF6, #3B82F6);
+                box-shadow: 0 0 50px rgba(124, 108, 255, .45); transition: transform .15s; }
+  button.play:active { transform: scale(.96); }
+  button.play::before { content: ""; position: absolute; inset: -14px; border-radius: 50%;
+                        border: 2px solid rgba(139, 92, 246, .5); opacity: 0; }
+  button.play.on::before { animation: ring 1.8s ease-out infinite; }
+  @keyframes ring { from { transform: scale(.9); opacity: .9; } to { transform: scale(1.25); opacity: 0; } }
+  .icon-stop { display: none; }
+  .on .icon-play { display: none; }
+  .on .icon-stop { display: block; }
+  .status { font-size: 18px; font-weight: 600; margin: 30px 0 4px; min-height: 24px; }
+  .hint { color: #8A909C; font-size: 14px; margin: 0; min-height: 20px; }
+  .meter { display: flex; gap: 4px; align-items: center; justify-content: center; height: 56px; margin: 26px 0 0; }
+  .meter i { width: 6px; height: 6px; border-radius: 3px; background: linear-gradient(#8B5CF6, #3B82F6); transition: height .05s; }
+  .card { align-self: stretch; margin-top: 30px; padding: 14px 16px; border-radius: 16px; display: flex; align-items: center; gap: 12px;
+          background: #171920; border: 1px solid #23262F; }
+  input[type=range] { flex: 1; appearance: none; -webkit-appearance: none; height: 6px; border-radius: 3px; outline: none;
+                      background: linear-gradient(90deg, #8B5CF6, #3B82F6) 0 / var(--v, 100%) 100% no-repeat, #2A2D36; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff;
+                                            box-shadow: 0 1px 6px rgba(0,0,0,.5); cursor: pointer; }
+  input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+  .vol { color: #8A909C; font-size: 13px; width: 40px; text-align: right; }
+  .note { color: #6B7180; font-size: 12.5px; margin-top: 18px; line-height: 1.45; }
+</style></head>
+<body><div class="wrap">
+  <header>
+    <div class="logo">
+      <svg width="26" height="26" viewBox="0 0 72 72" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round">
+        <circle cx="24" cy="36" r="6" fill="#fff" stroke="none"/>
+        <path d="M33.64 24.51A15 15 0 0 1 33.64 47.49M40.07 16.85A25 25 0 0 1 40.07 55.15M46.5 9.19A35 35 0 0 1 46.5 62.81"/>
+      </svg>
+    </div>
+    <div><h1>MirrorSound</h1><p class="sub">Звук телефона в браузере</p></div>
+  </header>
+
+  <button class="play" id="play" aria-label="Слушать">
+    <svg class="icon-play" width="64" height="64" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
+    <svg class="icon-stop" width="56" height="56" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+  </button>
+
+  <div class="status" id="status">Готово</div>
+  <p class="hint" id="hint">Нажмите, чтобы слушать</p>
+  <div class="meter" id="meter"></div>
+
+  <div class="card">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M3 9h4l5-4.5v15L7 15H3z" fill="#8A909C"/>
+      <path d="M15.5 8.8a4.5 4.5 0 0 1 0 6.4M18 6.3a8 8 0 0 1 0 11.4" stroke="#8A909C" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+    <input type="range" id="volume" min="0" max="100" value="100" aria-label="Громкость">
+    <span class="vol" id="volText">100%</span>
+  </div>
+  <p class="note">Держите эту вкладку открытой. Телефон и этот компьютер должны быть в одной сети.</p>
+</div>
+<script>
+(() => {
+  const BARS = 24;
+  const $ = id => document.getElementById(id);
+  const playBtn = $('play'), statusEl = $('status'), hintEl = $('hint'), volume = $('volume'), volText = $('volText');
+  const meter = $('meter');
+  const bars = Array.from({ length: BARS }, () => meter.appendChild(document.createElement('i')));
+  const levels = new Array(BARS).fill(0);
+
+  let ctx = null, gain = null, analyser = null, abort = null, wanted = false, playing = false, next = 0;
+
+  const setStatus = (status, hint) => { statusEl.textContent = status; hintEl.textContent = hint || ''; };
+
+  try { const v = localStorage.getItem('mirrorsound-volume'); if (v !== null) volume.value = v; } catch (e) {}
+  const applyVolume = () => {
+    volText.textContent = volume.value + '%';
+    volume.style.setProperty('--v', volume.value + '%');
+    if (gain) gain.gain.value = volume.value / 100;
+    try { localStorage.setItem('mirrorsound-volume', volume.value); } catch (e) {}
+  };
+  volume.addEventListener('input', applyVolume);
+  applyVolume();
+
+  playBtn.addEventListener('click', () => wanted ? stop() : start());
+
+  async function start() {
+    wanted = true;
+    playBtn.classList.add('on');
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      try { ctx = new AC({ sampleRate: 48000, latencyHint: 'interactive' }); } catch (e) { ctx = new AC(); }
+      gain = ctx.createGain();
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      gain.connect(analyser);
+      analyser.connect(ctx.destination);
+      applyVolume();
+      requestAnimationFrame(draw);
+    }
+    await ctx.resume();
+    while (wanted) {
+      setStatus('Подключение…');
+      try { await listen(); } catch (e) {}
+      playing = false;
+      if (!wanted) break;
+      setStatus('Нет связи с телефоном', 'Пробую снова…');
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  }
+
+  function stop() {
+    wanted = false;
+    playing = false;
+    playBtn.classList.remove('on');
+    if (abort) abort.abort();
+    setStatus('Остановлено', 'Нажмите, чтобы слушать');
+  }
+
+  async function listen() {
+    abort = new AbortController();
+    const res = await fetch('/stream', { signal: abort.signal, cache: 'no-store' });
+    if (!res.ok || !res.body) throw new Error('no stream');
+    const reader = res.body.getReader();
+    let pending = new Uint8Array(0), rate = 0, channels = 0;
+    next = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      pending = concat(pending, value);
+      if (!rate) {
+        if (pending.length < 10) continue;
+        const dv = new DataView(pending.buffer, pending.byteOffset, 10);
+        if (String.fromCharCode(pending[0], pending[1], pending[2], pending[3]) !== 'MSND') throw new Error('bad header');
+        rate = dv.getInt32(4, true);
+        channels = dv.getInt16(8, true);
+        pending = pending.slice(10);
+        playing = true;
+        setStatus('Играет звук с телефона', 'Нажмите, чтобы остановить');
+      }
+      const block = channels * 2;
+      if (pending.length < Math.floor(rate / 50) * block) continue; // schedule in pieces of at least 20 ms
+      const usable = pending.length - pending.length % block;
+      schedule(pending.subarray(0, usable), rate, channels);
+      pending = pending.slice(usable);
+    }
+  }
+
+  function schedule(bytes, rate, channels) {
+    const frames = bytes.length / (2 * channels);
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+    const buffer = ctx.createBuffer(channels, frames, rate);
+    for (let c = 0; c < channels; c++) {
+      const out = buffer.getChannelData(c);
+      for (let i = 0, p = c * 2; i < frames; i++, p += channels * 2) out[i] = dv.getInt16(p, true) / 32768;
+    }
+    const now = ctx.currentTime;
+    if (next < now + 0.015) next = now + 0.06;  // first piece or after a gap: keep 60 ms in hand
+    else if (next > now + 0.2) return;          // more than 200 ms queued (Wi-Fi burst): skip to stay in sync
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(gain);
+    src.start(next);
+    next += buffer.duration;
+  }
+
+  function concat(a, b) {
+    if (!a.length) return b;
+    const r = new Uint8Array(a.length + b.length);
+    r.set(a);
+    r.set(b, a.length);
+    return r;
+  }
+
+  const wave = new Float32Array(1024);
+  let level = 0;
+  function draw() {
+    requestAnimationFrame(draw);
+    let peak = 0;
+    if (playing && analyser) {
+      analyser.getFloatTimeDomainData(wave);
+      for (let i = 0; i < wave.length; i += 4) peak = Math.max(peak, Math.abs(wave[i]));
+    }
+    level = Math.max(Math.min(1, peak * 1.4), level * 0.88);
+    const mid = (BARS - 1) / 2;
+    for (let i = 0; i < BARS; i++) {
+      const shape = 1 - Math.abs(i - mid) / mid * 0.65;
+      const target = level * shape * (0.6 + 0.4 * Math.random());
+      levels[i] += (target - levels[i]) * 0.4;
+      bars[i].style.height = (6 + levels[i] * 50) + 'px';
+    }
+  }
+})();
+</script>
+</body></html>

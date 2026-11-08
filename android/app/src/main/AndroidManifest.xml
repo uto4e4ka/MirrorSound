@@ -40,5 +40,20 @@
             android:name=".StreamService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- Button in the quick settings shade -->
+        <service
+            android:name=".SoundTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_waves"
+            android:label="MirrorSound"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

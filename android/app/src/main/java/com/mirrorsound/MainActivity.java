@@ -3,6 +3,10 @@ package com.mirrorsound;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.StatusBarManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -10,6 +14,7 @@ import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.Icon;
 import android.graphics.drawable.RippleDrawable;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
@@ -37,6 +42,8 @@ import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends Activity {
+    /** Sent by the quick settings tile: ask for capture permission, start, and get out of the way. */
+    static final String ACTION_START = "com.mirrorsound.START";
     private static final int REQ_PROJECTION = 1;
     private static final int REQ_PERMISSIONS = 2;
 
@@ -62,10 +69,12 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private String hosts = "";
     private String pcName = "";
+    private boolean fromTile;
 
     private PulseButton power;
     private TextView statusView;
     private TextView hintView;
+    private TextView webView;
     private TextView pcTitle;
     private TextView pcAddress;
     private TextView infoView;
@@ -83,6 +92,7 @@ public class MainActivity extends Activity {
         showPc();
         refresh();
 
+        if (handleStart(getIntent())) return;
         if (!handleLink(getIntent()) && hosts.isEmpty()) discover();
     }
 
@@ -129,6 +139,17 @@ public class MainActivity extends Activity {
         hintView = text("", 14, MUTED, false);
         hintView.setGravity(Gravity.CENTER);
         root.addView(hintView, marginTop(dp(4)));
+
+        // While streaming: the address to open in a browser (tap to copy)
+        webView = text("", 14, LAVENDER, true);
+        webView.setGravity(Gravity.CENTER);
+        webView.setPadding(dp(14), dp(10), dp(14), dp(10));
+        webView.setBackground(ripple(rounded(0x1A8B5CF6, 0x338B5CF6, dp(14)), dp(14)));
+        webView.setOnClickListener(v -> copyWebUrl());
+        LinearLayout.LayoutParams webLp = new LinearLayout.LayoutParams(-2, -2);
+        webLp.gravity = Gravity.CENTER_HORIZONTAL;
+        webLp.topMargin = dp(14);
+        root.addView(webView, webLp);
 
         root.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1f));
 
@@ -177,6 +198,17 @@ public class MainActivity extends Activity {
         infoView.setMinHeight(dp(36));
         root.addView(infoView, marginTop(dp(10)));
 
+        if (Build.VERSION.SDK_INT >= 33) {
+            TextView addTile = text("Добавить кнопку в шторку", 13, LAVENDER, true);
+            addTile.setGravity(Gravity.CENTER);
+            addTile.setPadding(dp(10), dp(6), dp(10), dp(6));
+            addTile.setBackground(ripple(null, dp(10)));
+            addTile.setOnClickListener(v -> addTile());
+            LinearLayout.LayoutParams tileLp = new LinearLayout.LayoutParams(-2, -2);
+            tileLp.gravity = Gravity.CENTER_HORIZONTAL;
+            root.addView(addTile, tileLp);
+        }
+
         return frame;
     }
 
@@ -185,12 +217,41 @@ public class MainActivity extends Activity {
         power.setActive(running);
         statusView.setText(StreamService.status);
         hintView.setText(running ? "Нажмите, чтобы остановить" : "Нажмите, чтобы начать");
+        String url = StreamService.webUrl;
+        WebPlayer web = StreamService.web;
+        if (running && url != null) {
+            int listeners = web == null ? 0 : web.listenerCount();
+            webView.setText("Слушать в браузере: " + url.replace("http://", "") +
+                    (listeners > 0 ? "\nСлушают: " + listeners : ""));
+            webView.setVisibility(View.VISIBLE);
+        } else {
+            webView.setVisibility(View.GONE);
+        }
+    }
+
+    private void copyWebUrl() {
+        String url = StreamService.webUrl;
+        if (url == null) return;
+        getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("MirrorSound", url));
+        infoView.setText("Адрес скопирован. Откройте его в браузере на компьютере в той же сети.");
+    }
+
+    private void addTile() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        getSystemService(StatusBarManager.class).requestAddTileService(
+                new ComponentName(this, SoundTileService.class), "MirrorSound",
+                Icon.createWithResource(this, R.drawable.ic_waves), getMainExecutor(),
+                result -> infoView.setText(
+                        result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED
+                                ? "Кнопка уже есть в шторке."
+                                : result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED
+                                ? "Готово: кнопка MirrorSound в шторке." : ""));
     }
 
     private void showPc() {
         if (hosts.isEmpty()) {
             pcTitle.setText("Компьютер не выбран");
-            pcAddress.setText("Отсканируйте QR-код с экрана ПК");
+            pcAddress.setText("Звук можно слушать в браузере");
         } else {
             pcTitle.setText(pcName.isEmpty() ? "Компьютер" : pcName);
             pcAddress.setText(hosts.split(",")[0]);
@@ -230,7 +291,19 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleLink(intent);
+        if (!handleStart(intent)) handleLink(intent);
+    }
+
+    private boolean handleStart(Intent intent) {
+        if (intent == null || !ACTION_START.equals(intent.getAction())) return false;
+        intent.setAction(null);
+        fromTile = true;
+        if (StreamService.running) {
+            finish();
+        } else {
+            begin();
+        }
+        return true;
     }
 
     /** Opened from the PC's page via mirrorsound://connect?h=ip1,ip2&n=NAME */
@@ -275,10 +348,7 @@ public class MainActivity extends Activity {
     }
 
     private void begin() {
-        if (hosts.isEmpty()) {
-            infoView.setText("Сначала отсканируйте QR-код или найдите компьютер в сети.");
-            return;
-        }
+        // Without a chosen PC the phone still streams to browsers (web player).
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             String[] perms = Build.VERSION.SDK_INT >= 33
                     ? new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS}
@@ -297,6 +367,7 @@ public class MainActivity extends Activity {
             begin();
         } else {
             infoView.setText("Без разрешения на запись звука передавать звук нельзя.");
+            fromTile = false;
         }
     }
 
@@ -306,6 +377,7 @@ public class MainActivity extends Activity {
         if (requestCode != REQ_PROJECTION) return;
         if (resultCode != RESULT_OK || data == null) {
             infoView.setText("Трансляция отменена.");
+            if (fromTile) finish();
             return;
         }
         Intent service = new Intent(this, StreamService.class)
@@ -314,6 +386,10 @@ public class MainActivity extends Activity {
                 .putExtra(StreamService.EXTRA_HOST, hosts);
         startForegroundService(service);
         infoView.setText("");
+        if (fromTile) {
+            fromTile = false;
+            finish(); // started from the shade: back to whatever the user was doing
+        }
     }
 
     /** Broadcasts a UDP query; the PC app answers with its name. */
